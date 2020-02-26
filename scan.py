@@ -13,11 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import copy
 import json
 import os
 from urllib.parse import unquote_plus
 from distutils.util import strtobool
+from s3_encryption.client import S3EncryptionClient
 
 import boto3
 
@@ -25,6 +27,7 @@ import clamav
 import metrics
 from common import AV_DEFINITION_S3_BUCKET
 from common import AV_DEFINITION_S3_PREFIX
+from common import AV_S3_ENCRYPTED_KEY
 from common import AV_DELETE_INFECTED_FILES
 from common import AV_PROCESS_ORIGINAL_VERSION_ONLY
 from common import AV_SCAN_START_METADATA
@@ -221,7 +224,16 @@ def lambda_handler(event, context):
 
     file_path = get_local_path(s3_object, "/tmp")
     create_dir(os.path.dirname(file_path))
-    s3_object.download_file(file_path)
+
+    if AV_S3_ENCRYPTED_KEY in [None, ""]:
+        s3_object.download_file(file_path)
+    else:
+        plaintext_key = base64.b64decode(AV_S3_ENCRYPTED_KEY)
+        s3encrypt = S3EncryptionClient(encryption_key=plaintext_key)
+        decrypted_content = s3encrypt.get_object(Bucket=s3_object.bucket_name, Key=s3_object.key)
+        file = open(file_path, "wb")
+        file.write(decrypted_content)
+        file.close()
 
     to_download = clamav.update_defs_from_s3(
         s3_client, AV_DEFINITION_S3_BUCKET, AV_DEFINITION_S3_PREFIX
